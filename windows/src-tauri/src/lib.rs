@@ -6,6 +6,7 @@ mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod ollama;
 mod pipe;
 mod platform;
 mod secrets;
@@ -24,6 +25,7 @@ use claude::{Chat, ChatContext, ChatReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
+use ollama::{ollama_chat_send, OLLAMA_MANAGER};
 use pipe::Pending;
 use settings::Settings;
 
@@ -272,6 +274,48 @@ fn secret_clear(key: String) -> Result<(), String> {
     secrets::clear(&key)
 }
 
+// Ollama Commands
+#[tauri::command]
+async fn ollama_start() -> Result<(), String> {
+    OLLAMA_MANAGER.start()
+}
+
+#[tauri::command]
+async fn ollama_stop() -> Result<(), String> {
+    OLLAMA_MANAGER.stop()
+}
+
+#[tauri::command]
+async fn ollama_is_running() -> Result<bool, String> {
+    Ok(OLLAMA_MANAGER.is_running())
+}
+
+#[tauri::command]
+async fn ollama_get_models() -> Result<Vec<String>, String> {
+    ollama::OllamaManager::get_models().await
+}
+
+#[tauri::command]
+async fn ollama_chat_send_wrapper(
+    message: String,
+    model: String,
+    context: Option<ChatContext>,
+) -> Result<ChatReply, String> {
+    let history = Vec::new();
+    let reply_text = ollama::ollama_chat_send(
+        &message,
+        &model,
+        history,
+        context.map(|c| ollama::OllamaChatContext {
+            kind: c.kind,
+            name: Some(c.name),
+            path: Some(c.path),
+        }),
+    )
+    .await?;
+    Ok(ChatReply { text: reply_text })
+}
+
 /// Opens the configured n8n instance — the URL lives in the Credential Manager.
 #[tauri::command]
 fn open_n8n() {
@@ -360,6 +404,7 @@ fn open_settings_window(app: AppHandle) {
 
 pub fn run() {
     platform::prepare_environment();
+    ollama::start_idle_monitor();
     let loaded = settings::load();
     let gate = Arc::new(PollGate::new());
 
@@ -401,6 +446,11 @@ pub fn run() {
             open_n8n,
             open_settings_window,
             set_paused,
+            ollama_start,
+            ollama_stop,
+            ollama_is_running,
+            ollama_get_models,
+            ollama_chat_send_wrapper,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
